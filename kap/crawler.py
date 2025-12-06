@@ -52,15 +52,17 @@ class Crawler:
         from_date: Optional[str] = None,
         to_date: Optional[str] = None,
         fund_type_list: Optional[List[str]] = None,
-        limit: Optional[int] = None
+        limit: Optional[int] = None,
+        fetch_attachments: bool = False
     ) -> List[Dict]:
         """Fetch fund announcements from KAP API.
         
         Args:
-            from_date: Start date in YYYY-MM-DD format (default: 30 days ago)
+            from_date: Start date in YYYY-MM-DD format (default: 365 days ago)
             to_date: End date in YYYY-MM-DD format (default: today)
             fund_type_list: List of fund types (e.g., ["YF"], ["BYF"], etc.)
             limit: Maximum number of announcements to return (None = all)
+            fetch_attachments: Whether to fetch attachment URLs (default: False)
         
         Returns:
             List of fund announcement dictionaries
@@ -71,7 +73,7 @@ class Crawler:
         if to_date is None:
             to_date = datetime.now().strftime("%Y-%m-%d")
         if from_date is None:
-            from_date = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d")
+            from_date = (datetime.now() - timedelta(days=365)).strftime("%Y-%m-%d")
         
         if fund_type_list is None:
             fund_type_list = ["YF"]  # Default to Yatırım Fonları
@@ -103,7 +105,7 @@ class Crawler:
             if response.ok:
                 data = response.json()
                 if isinstance(data, list):
-                    announcements = self._parse_fund_announcements(data, limit)
+                    announcements = self._parse_fund_announcements(data, limit, fetch_attachments)
                     logger.info(f"Fetched {len(announcements)} fund announcements from API")
                     return announcements
                 else:
@@ -115,12 +117,13 @@ class Crawler:
         
         return []
     
-    def _parse_fund_announcements(self, data: list, limit: Optional[int]) -> List[Dict]:
+    def _parse_fund_announcements(self, data: list, limit: Optional[int], fetch_attachments: bool = False) -> List[Dict]:
         """Parse fund announcement API response.
         
         Args:
             data: API response JSON (list of items)
             limit: Maximum number of announcements to return
+            fetch_attachments: Whether to fetch attachment URLs
         
         Returns:
             List of fund announcement dictionaries
@@ -130,17 +133,18 @@ class Crawler:
         items = data[:limit] if limit else data
         
         for item in items:
-            ann = self._extract_fund_announcement(item)
+            ann = self._extract_fund_announcement(item, fetch_attachments)
             if ann:
                 announcements.append(ann)
         
         return announcements
     
-    def _extract_fund_announcement(self, item: dict) -> Optional[Dict]:
+    def _extract_fund_announcement(self, item: dict, fetch_attachments: bool = False) -> Optional[Dict]:
         """Extract fund announcement data from API item.
         
         Args:
             item: API response item
+            fetch_attachments: Whether to fetch attachment URLs
         
         Returns:
             Fund announcement dictionary or None
@@ -156,11 +160,11 @@ class Crawler:
             # Check for attachments
             attachment_count = item.get("attachmentCount", 0)
             has_attachment = attachment_count > 0
-            attachment_pdf_url = None
+            attachment_pdf_urls = []
             
-            if has_attachment:
-                # Fetch attachment URL from detail page
-                attachment_pdf_url = self._fetch_attachment_url(str(disclosure_index))
+            if has_attachment and fetch_attachments:
+                # Fetch attachment URLs from detail page
+                attachment_pdf_urls = self._fetch_attachment_urls(str(disclosure_index))
             
             # Extract related stocks
             related_stocks = item.get("relatedStocks")
@@ -182,7 +186,7 @@ class Crawler:
                 "has_attachment": has_attachment,
                 "attachment_count": attachment_count,
                 "detail_pdf_url": detail_pdf_url,
-                "attachment_pdf_url": attachment_pdf_url,
+                "attachment_pdf_urls": attachment_pdf_urls,
             }
             
             return announcement
@@ -196,15 +200,17 @@ class Crawler:
         from_date: Optional[str] = None,
         to_date: Optional[str] = None,
         member_type: str = "IGS",
-        limit: Optional[int] = None
+        limit: Optional[int] = None,
+        fetch_attachments: bool = False
     ) -> List[Dict]:
         """Fetch company announcements from KAP API.
         
         Args:
-            from_date: Start date in YYYY-MM-DD format (default: 30 days ago)
+            from_date: Start date in YYYY-MM-DD format (default: 365 days ago)
             to_date: End date in YYYY-MM-DD format (default: today)
             member_type: Member type (default: "IGS" - İşletmeler Genel Sınıfı)
             limit: Maximum number of announcements to return (None = all)
+            fetch_attachments: Whether to fetch attachment URLs (default: False)
         
         Returns:
             List of company announcement dictionaries
@@ -215,7 +221,7 @@ class Crawler:
         if to_date is None:
             to_date = datetime.now().strftime("%Y-%m-%d")
         if from_date is None:
-            from_date = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d")
+            from_date = (datetime.now() - timedelta(days=365)).strftime("%Y-%m-%d")
         
         api_url = f"{self.root_url}/tr/api/disclosure/members/byCriteria"
         
@@ -254,7 +260,7 @@ class Crawler:
             if response.ok:
                 data = response.json()
                 if isinstance(data, list):
-                    announcements = self._parse_company_announcements(data, limit)
+                    announcements = self._parse_company_announcements(data, limit, fetch_attachments)
                     logger.info(f"Fetched {len(announcements)} company announcements from API")
                     return announcements
                 else:
@@ -266,12 +272,13 @@ class Crawler:
         
         return []
     
-    def _parse_company_announcements(self, data: list, limit: Optional[int]) -> List[Dict]:
+    def _parse_company_announcements(self, data: list, limit: Optional[int], fetch_attachments: bool = False) -> List[Dict]:
         """Parse company announcement API response.
         
         Args:
             data: API response JSON (list of items)
             limit: Maximum number of announcements to return
+            fetch_attachments: Whether to fetch attachment URLs
         
         Returns:
             List of announcement dictionaries
@@ -281,17 +288,18 @@ class Crawler:
         items = data[:limit] if limit else data
         
         for item in items:
-            ann = self._extract_company_announcement(item)
+            ann = self._extract_company_announcement(item, fetch_attachments)
             if ann:
                 announcements.append(ann)
         
         return announcements
     
-    def _extract_company_announcement(self, item: dict) -> Optional[Dict]:
+    def _extract_company_announcement(self, item: dict, fetch_attachments: bool = False) -> Optional[Dict]:
         """Extract company announcement data from API item.
         
         Args:
             item: API response item
+            fetch_attachments: Whether to fetch attachment URLs
         
         Returns:
             Announcement dictionary or None
@@ -307,11 +315,11 @@ class Crawler:
             # Check for attachments
             attachment_count = item.get("attachmentCount", 0)
             has_attachment = attachment_count > 0
-            attachment_pdf_url = None
+            attachment_pdf_urls = []
             
-            if has_attachment:
-                # Fetch attachment URL from detail page
-                attachment_pdf_url = self._fetch_attachment_url(str(disclosure_index))
+            if has_attachment and fetch_attachments:
+                # Fetch attachment URLs from detail page
+                attachment_pdf_urls = self._fetch_attachment_urls(str(disclosure_index))
             
             # Extract company code from stockCodes (string field)
             stock_codes = item.get("stockCodes")
@@ -344,7 +352,7 @@ class Crawler:
                 "has_attachment": has_attachment,
                 "attachment_count": attachment_count,
                 "detail_pdf_url": detail_pdf_url,
-                "attachment_pdf_url": attachment_pdf_url,
+                "attachment_pdf_urls": attachment_pdf_urls,
             }
             
             return announcement
@@ -353,18 +361,20 @@ class Crawler:
             logger.error(f"Error extracting company announcement from API item: {e}")
             return None
     
-    def _fetch_attachment_url(self, announcement_id: str) -> Optional[str]:
-        """Fetch PDF attachment URL from announcement detail page.
+    def _fetch_attachment_urls(self, announcement_id: str) -> List[str]:
+        """Fetch all PDF attachment URLs from announcement detail page.
         
         Args:
             announcement_id: Announcement ID (numeric, e.g., "1524030")
         
         Returns:
-            PDF attachment URL or None
+            List of PDF attachment URLs (empty list if none found)
         """
         self._enforce_rate_limit()
         
         url = f"{self.root_url}/tr/Bildirim/{announcement_id}"
+        attachment_urls = []
+        
         try:
             response = self.session.get(url, timeout=self.timeout)
             response.raise_for_status()
@@ -388,34 +398,39 @@ class Crawler:
                             # Make absolute URL
                             if not href.startswith('http'):
                                 href = urljoin(self.root_url, href)
-                            logger.info(f"Found attachment PDF URL: {href}")
-                            return href
+                            if href not in attachment_urls:  # Avoid duplicates
+                                attachment_urls.append(href)
                     # Try parent's parent
                     parent = parent.find_parent()
             
             # Alternative: search entire page for download links (more aggressive)
             # Also check for data attributes or script tags that might contain URLs
             download_links = soup.find_all('a', href=re.compile(r'/api/file/download/'))
-            if download_links:
-                href = download_links[0].get('href', '')
+            for link in download_links:
+                href = link.get('href', '')
                 if not href.startswith('http'):
                     href = urljoin(self.root_url, href)
-                logger.info(f"Found attachment PDF URL (alternative search): {href}")
-                return href
+                if href not in attachment_urls:  # Avoid duplicates
+                    attachment_urls.append(href)
             
             # Last resort: search in raw HTML for download URLs
-            html_text = response.text
-            download_match = re.search(r'/api/file/download/[a-zA-Z0-9]+', html_text)
-            if download_match:
-                href = download_match.group(0)
-                if not href.startswith('http'):
-                    href = urljoin(self.root_url, href)
-                logger.info(f"Found attachment PDF URL (regex search): {href}")
-                return href
+            if not attachment_urls:
+                html_text = response.text
+                download_matches = re.findall(r'/api/file/download/[a-zA-Z0-9]+', html_text)
+                for match in download_matches:
+                    href = match
+                    if not href.startswith('http'):
+                        href = urljoin(self.root_url, href)
+                    if href not in attachment_urls:  # Avoid duplicates
+                        attachment_urls.append(href)
             
-            logger.debug(f"No attachment found for announcement {announcement_id}")
-            return None
+            if attachment_urls:
+                logger.info(f"Found {len(attachment_urls)} attachment PDF URL(s) for announcement {announcement_id}")
+            else:
+                logger.debug(f"No attachment found for announcement {announcement_id}")
+            
+            return attachment_urls
             
         except Exception as e:
-            logger.error(f"Error fetching attachment URL for {announcement_id}: {e}")
-            return None
+            logger.error(f"Error fetching attachment URLs for {announcement_id}: {e}")
+            return []
