@@ -28,7 +28,6 @@ setuptools.setup(
         "requests>=2.31.0",
         "beautifulsoup4>=4.12.0",
         "lxml>=4.9.0",
-        "marshmallow>=3.20.0",
     ],
     extras_require={
         "dev": [
