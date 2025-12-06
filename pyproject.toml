@@ -1,0 +1,8 @@
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+
+[tool.black]
+line-length = 88
+
+[tool.pylint.messages_control]
+disable = ["C0111", "R0903"]
