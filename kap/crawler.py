@@ -361,76 +361,116 @@ class Crawler:
             logger.error(f"Error extracting company announcement from API item: {e}")
             return None
     
-    def _fetch_attachment_urls(self, announcement_id: str) -> List[str]:
+    def _fetch_attachment_urls(self, announcement_id: str, max_retries: int = 2) -> List[str]:
         """Fetch all PDF attachment URLs from announcement detail page.
         
         Args:
             announcement_id: Announcement ID (numeric, e.g., "1524030")
+            max_retries: Maximum number of retry attempts on error (default: 2)
         
         Returns:
             List of PDF attachment URLs (empty list if none found)
         """
-        self._enforce_rate_limit()
-        
         url = f"{self.root_url}/tr/Bildirim/{announcement_id}"
         attachment_urls = []
         
-        try:
-            response = self.session.get(url, timeout=self.timeout)
-            response.raise_for_status()
-            
-            soup = BeautifulSoup(response.text, 'lxml')
-            
-            # Find "Bildirim Ekleri" section - look for text containing this
-            # The section usually has a heading or label with "Bildirim Ekleri"
-            attachment_text = soup.find(string=re.compile(r'Bildirim Ekleri', re.I))
-            if attachment_text:
-                # Find parent container
-                parent = attachment_text.find_parent()
-                # Navigate up to find the container with links
-                while parent:
-                    # Look for download links in this parent and its children
-                    links = parent.find_all('a', href=True)
-                    for link in links:
-                        href = link.get('href', '')
-                        # Check if it's a download link
-                        if '/api/file/download/' in href:
-                            # Make absolute URL
-                            if not href.startswith('http'):
-                                href = urljoin(self.root_url, href)
-                            if href not in attachment_urls:  # Avoid duplicates
-                                attachment_urls.append(href)
-                    # Try parent's parent
-                    parent = parent.find_parent()
-            
-            # Alternative: search entire page for download links (more aggressive)
-            # Also check for data attributes or script tags that might contain URLs
-            download_links = soup.find_all('a', href=re.compile(r'/api/file/download/'))
-            for link in download_links:
-                href = link.get('href', '')
-                if not href.startswith('http'):
-                    href = urljoin(self.root_url, href)
-                if href not in attachment_urls:  # Avoid duplicates
-                    attachment_urls.append(href)
-            
-            # Last resort: search in raw HTML for download URLs
-            if not attachment_urls:
-                html_text = response.text
-                download_matches = re.findall(r'/api/file/download/[a-zA-Z0-9]+', html_text)
-                for match in download_matches:
-                    href = match
+        for attempt in range(max_retries + 1):
+            try:
+                self._enforce_rate_limit()
+                
+                response = self.session.get(url, timeout=self.timeout)
+                
+                # Check for rate limiting (429 Too Many Requests)
+                if response.status_code == 429:
+                    retry_after = int(response.headers.get("Retry-After", 120))
+                    logger.warning(
+                        f"Rate limited (429) for announcement {announcement_id}. "
+                        f"Waiting {retry_after} seconds before retry (attempt {attempt + 1}/{max_retries + 1})"
+                    )
+                    if attempt < max_retries:
+                        time.sleep(retry_after)
+                        continue
+                    else:
+                        logger.error(f"Max retries reached for announcement {announcement_id} due to rate limiting")
+                        return []
+                
+                response.raise_for_status()
+                
+                soup = BeautifulSoup(response.text, 'lxml')
+                
+                # Find "Bildirim Ekleri" section - look for text containing this
+                # The section usually has a heading or label with "Bildirim Ekleri"
+                attachment_text = soup.find(string=re.compile(r'Bildirim Ekleri', re.I))
+                if attachment_text:
+                    # Find parent container
+                    parent = attachment_text.find_parent()
+                    # Navigate up to find the container with links
+                    while parent:
+                        # Look for download links in this parent and its children
+                        links = parent.find_all('a', href=True)
+                        for link in links:
+                            href = link.get('href', '')
+                            # Check if it's a download link
+                            if '/api/file/download/' in href:
+                                # Make absolute URL
+                                if not href.startswith('http'):
+                                    href = urljoin(self.root_url, href)
+                                if href not in attachment_urls:  # Avoid duplicates
+                                    attachment_urls.append(href)
+                        # Try parent's parent
+                        parent = parent.find_parent()
+                
+                # Alternative: search entire page for download links (more aggressive)
+                # Also check for data attributes or script tags that might contain URLs
+                download_links = soup.find_all('a', href=re.compile(r'/api/file/download/'))
+                for link in download_links:
+                    href = link.get('href', '')
                     if not href.startswith('http'):
                         href = urljoin(self.root_url, href)
                     if href not in attachment_urls:  # Avoid duplicates
                         attachment_urls.append(href)
-            
-            if attachment_urls:
-                logger.info(f"Found {len(attachment_urls)} attachment PDF URL(s) for announcement {announcement_id}")
-            else:
-                logger.debug(f"No attachment found for announcement {announcement_id}")
-            
-            return attachment_urls
-            
-        except Exception as e:
-            logger.error(f"Error fetching attachment URLs for {announcement_id}: {e}")
-            return []
+                
+                # Last resort: search in raw HTML for download URLs
+                if not attachment_urls:
+                    html_text = response.text
+                    download_matches = re.findall(r'/api/file/download/[a-zA-Z0-9]+', html_text)
+                    for match in download_matches:
+                        href = match
+                        if not href.startswith('http'):
+                            href = urljoin(self.root_url, href)
+                        if href not in attachment_urls:  # Avoid duplicates
+                            attachment_urls.append(href)
+                
+                if attachment_urls:
+                    logger.info(f"Found {len(attachment_urls)} attachment PDF URL(s) for announcement {announcement_id}")
+                else:
+                    logger.debug(f"No attachment found for announcement {announcement_id}")
+                
+                return attachment_urls
+                
+            except Exception as e:
+                error_msg = str(e).lower()
+                is_rate_limit_error = any(keyword in error_msg for keyword in [
+                    'rate limit', '429', 'too many requests', 'blocked', 'robot check'
+                ])
+                
+                if is_rate_limit_error and attempt < max_retries:
+                    wait_time = 120  # 2 minutes
+                    logger.warning(
+                        f"Rate limiting detected for announcement {announcement_id}. "
+                        f"Waiting {wait_time} seconds before retry (attempt {attempt + 1}/{max_retries + 1})"
+                    )
+                    time.sleep(wait_time)
+                    continue
+                elif attempt < max_retries:
+                    logger.warning(
+                        f"Error fetching attachment URLs for {announcement_id} (attempt {attempt + 1}/{max_retries + 1}): {e}. "
+                        f"Retrying in 5 seconds..."
+                    )
+                    time.sleep(5)
+                    continue
+                else:
+                    logger.error(f"Error fetching attachment URLs for {announcement_id} after {max_retries + 1} attempts: {e}")
+                    return []
+        
+        return []
